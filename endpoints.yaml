@@ -1,0 +1,7 @@
+orders:
+  get_all: /orders
+  get_one: /orders/{id}
+  post: /orders
+  delete: /orders/{id}
+websocket:
+  subscription: /ws
