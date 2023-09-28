@@ -2,12 +2,14 @@ import asyncio
 import random
 import time
 from asyncio import Queue, Task
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
 import websockets
 from fastapi import (BackgroundTasks, FastAPI, Request, Response, WebSocket,
                      WebSocketDisconnect)
+from fastapi.concurrency import run_in_threadpool
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
@@ -96,6 +98,7 @@ orders = []
 mock_rates = {Stoks.EURO_TO_SEK: 11.0886, Stoks.SEK_TO_EURO: 0.0780,
               Stoks.DOLLAR_TO_SEK: 10.2773, Stoks.SEK_TO_DOLLAR: 0.0823,
               Stoks.POUND_TO_SEK: 12.4602, Stoks.SEK_TO_POUND: 0.0677}
+dtm_fmt = "%Y.%m.%d %H:%M:%S:%f"
 
 
 async def mock_process_order(order_id):
@@ -106,23 +109,28 @@ async def mock_process_order(order_id):
                 break  # nothing to process if the order is not pending
             # assign a random duration for processing the order
             process_duration = [0.2, 0.4, 0.6, 0.7, 2.0][random.randint(0, 4)]
-            # wait for mimicing order processing
-            time.sleep(min(process_duration, timeout))
+            # sleep for mimicing order processing & run it in a separate thread
+            await run_in_threadpool(lambda: time.sleep(min(process_duration,
+                                                           timeout)))
             # set new status to the order according to it's process duration
             if process_duration < timeout:
                 order["status"] = OrderStatus.EXECUTED
             else:
                 order["status"] = OrderStatus.CANCELLED
             # publish status update message once the new status is set
-            msg = (f"Order status is updated -> id: {order['id']} status: "
-                   f"{order['status']}")
+            msg = (f"{datetime.now().strftime(dtm_fmt)[:-2]} - Order status "
+                   f"is updated - id:{order['id']} - status:{order['status']}")
             await global_listener.receive_and_publish_message(msg)
             # remove 20 % of executed orders randomly
             if (order["status"] == OrderStatus.EXECUTED and
                random.randint(0, 5) == 5):
-                time.sleep(random.random())  # sleep n seconds where 0 < n < 1
+                # short wait for status update & run it in a separate thread
+                await run_in_threadpool(lambda: time.sleep(random.random()))
                 order["status"] = OrderStatus.CANCELLED
                 # publish status update message once the order is cancelled
+                msg = (f"{datetime.now().strftime(dtm_fmt)[:-2]} - Order "
+                       f"status is updated - id:{order['id']} - status:"
+                       f"{order['status']}")
                 await global_listener.receive_and_publish_message(msg)
 
 
@@ -214,8 +222,8 @@ async def add_order_to_db(request):
     order["status"] = OrderStatus.PENDING
     orders.append(order)
     # publish 'added new order' message upon adding a new order
-    msg = (f"A new order is added -> id: {order['id']} status: "
-           f"{order['status']}")
+    msg = (f"{datetime.now().strftime(dtm_fmt)[:-2]} -    A new order is "
+           f"added - id:{order['id']} - status:{order['status']}")
     await global_listener.receive_and_publish_message(msg)
     return order
 
@@ -228,8 +236,9 @@ async def cancel_order_in_db(order_id):
                 if order.get("status") != OrderStatus.CANCELLED:
                     order["status"] = OrderStatus.CANCELLED
                     # publish status update message upon cancelling an order
-                    msg = (f"Order status is updated -> id: {order['id']} "
-                           f"status: {order['status']}")
+                    msg = (f"{datetime.now().strftime(dtm_fmt)[:-2]} - "
+                           f"Order status is updated - id:{order['id']} - "
+                           f"status:{order['status']}")
                     await global_listener.receive_and_publish_message(msg)
                 return order
         except ValueError:
